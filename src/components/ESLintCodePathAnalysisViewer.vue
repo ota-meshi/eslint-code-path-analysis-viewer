@@ -80,21 +80,29 @@ function renderGraphviz(code: string) {
                     codePathSegments.push(seg);
                     nodesMap.set(seg, []);
                   },
+                  onUnreachableCodePathSegmentStart(seg: Rule.CodePathSegment) {
+                    codePathSegments.push(seg);
+                    nodesMap.set(seg, []);
+                  },
                   onCodePathSegmentEnd(seg: Rule.CodePathSegment) {
+                    codePathSegments.splice(codePathSegments.indexOf(seg), 1);
+                  },
+                  onUnreachableCodePathSegmentEnd(seg: Rule.CodePathSegment) {
                     codePathSegments.splice(codePathSegments.indexOf(seg), 1);
                   },
                   "*"(node: any) {
                     if (codePaths.length > 1) return;
                     for (const codePathSegment of codePathSegments) {
                       nodesMap
-                        .get(codePathSegment)!
-                        .push(nodeToString(node, "enter"));
+                        .get(codePathSegment)
+                        ?.push(nodeToString(node, "enter"));
                     }
                   },
                   "*:exit"(node: any) {
                     if (codePaths.length > 1) return;
                     for (const codePathSegment of codePathSegments) {
-                      const nodes = nodesMap.get(codePathSegment)!;
+                      const nodes = nodesMap.get(codePathSegment);
+                      if (!nodes) continue;
                       const last = nodes.length - 1;
 
                       if (
@@ -157,8 +165,8 @@ function renderGraphviz(code: string) {
         'style="rounded,dashed,filled",fillcolor="#FF9800",label="<<unreachable>>\\n';
     }
 
-    const nodes = nodesMap.get(segment)!;
-    if (nodes.length > 0) {
+    const nodes = nodesMap.get(segment);
+    if (nodes && nodes.length > 0) {
       text += nodes.join("\\n");
     } else {
       text += "????";

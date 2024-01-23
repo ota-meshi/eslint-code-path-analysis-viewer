@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { shallowRef, onMounted, ref, watch, computed } from "vue";
+import { shallowRef, onMounted, computed } from "vue";
 import CodeEditor from "./CodeEditor.vue";
 import GraphvizViewer from "./GraphvizViewer.vue";
 import type { Monaco } from "../monaco-editor";
@@ -15,7 +15,6 @@ const code = computed({
   get: () => props.code,
   set: (value) => emit("update:code", value),
 });
-const dotCode = ref("");
 
 const monacoRef = shallowRef<Monaco>();
 void loadMonaco().then((monaco) => (monacoRef.value = monaco));
@@ -24,7 +23,7 @@ onMounted(() => {
   renderGraphviz(code.value);
 });
 
-watch(code, renderGraphviz);
+const dotCode = computed(() => renderGraphviz(code.value));
 
 function nodeToString(
   node: (
@@ -126,18 +125,17 @@ function renderGraphviz(code: string) {
   );
 
   if (!codePath) {
-    return;
+    return "";
   }
 
   let text =
-    "\n" +
-    "digraph {\n" +
-    'node[shape=box,style="rounded,filled",fillcolor=white];\n' +
-    'initial[label="",shape=circle,style=filled,fillcolor=black,width=0.25,height=0.25];\n';
+    `\n` +
+    `digraph {\n` +
+    `node[shape=box,style="rounded,filled",fillcolor=white];\n` +
+    `initial[label="",shape=circle,style=filled,fillcolor=black,width=0.25,height=0.25];\n`;
 
   if (codePath.returnedSegments.length > 0) {
-    text +=
-      'final[label="",shape=doublecircle,style=filled,fillcolor=black,width=0.25,height=0.25];\n';
+    text += `final[label="",shape=doublecircle,style=filled,fillcolor=black,width=0.25,height=0.25];\n`;
   }
   if (codePath.thrownSegments.length > 0) {
     text +=
@@ -171,7 +169,7 @@ function renderGraphviz(code: string) {
 
   text += `${arrows}\n`;
   text += "}";
-  dotCode.value = text;
+  return text;
 }
 
 /**

@@ -13,8 +13,8 @@ void Graphviz.load().then((r) => {
 });
 
 const svg = computed(() => {
-  if (props.dot == null || graphviz.value == null) return "";
-  const r = graphviz.value?.dot(props.dot);
+  if (!props.dot || graphviz.value == null) return "";
+  const r = graphviz.value.dot(props.dot);
   return r;
 });
 </script>

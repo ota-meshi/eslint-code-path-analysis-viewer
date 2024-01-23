@@ -31,19 +31,22 @@ function nodeToString(
     | { type: "Identifier"; name: string }
     | { type: "Literal"; value: string }
     | { type: never }
-  ) & { loc: { start: { line: number } } },
+  ) & { loc: { start: { line: number }; end: { line: number } } },
   label: string | undefined,
+  options?: { showLoc?: boolean },
 ) {
-  const suffix = label ? `:${label}` : "";
+  const event = label ? `:${label}` : "";
 
-  const line = `L${node.loc.start.line}`;
+  const suffix = options?.showLoc
+    ? ` @ L${node.loc.start.line}-${node.loc.end.line}`
+    : "";
   switch (node.type) {
     case "Identifier":
-      return `${node.type}${suffix} (${node.name}) @ ${line}`;
+      return `${node.type}${event} (${node.name})${suffix}`;
     case "Literal":
-      return `${node.type}${suffix} (${node.value}) @ ${line}`;
+      return `${node.type}${event} (${node.value})${suffix}`;
     default:
-      return `${(node as any).type}${suffix} @ ${line}`;
+      return `${(node as any).type}${event}${suffix}`;
   }
 }
 
@@ -51,7 +54,7 @@ function renderGraphviz(code: string) {
   const linter = new Linter({ configType: "flat" });
 
   let codePath: Rule.CodePath | undefined;
-  let codePaths: Rule.CodePath[] = [];
+  const codePaths: Rule.CodePath[] = [];
   const codePathSegments: Rule.CodePathSegment[] = [];
   const nodesMap = new Map<Rule.CodePathSegment, string[]>();
   linter.verify(

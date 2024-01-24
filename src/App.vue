@@ -55,8 +55,10 @@ if (typeof window !== "undefined") {
       <a href="https://github.com/eslint-community/">
         <img class="community-logo" src="/icon.svg" />
       </a>
-      <a href="https://eslint.org/"> ESLint </a>
-      Code Path Analysis Viewer
+      <a href="https://eslint.org/docs/latest/extend/code-path-analysis">
+        ESLint Code Path Analysis
+      </a>
+      Viewer
     </div>
     <div class="header-menu">
       <ThemeSwitch />

@@ -6,6 +6,7 @@ import type { Monaco } from "../monaco-editor";
 import { loadMonaco } from "../monaco-editor";
 import type { Rule } from "eslint";
 import { Linter } from "eslint";
+import type * as ESTree from "estree";
 
 const props = defineProps<{
   code: string;
@@ -26,18 +27,14 @@ onMounted(() => {
 const dotCode = computed(() => renderGraphviz(code.value));
 
 function nodeToString(
-  node: (
-    | { type: "Identifier"; name: string }
-    | { type: "Literal"; value: string }
-    | { type: never }
-  ) & { loc: { start: { line: number }; end: { line: number } } },
+  node: ESTree.Node,
   label: string | undefined,
   options?: { showLoc?: boolean },
 ) {
   const event = label ? `:${label}` : "";
 
   const suffix = options?.showLoc
-    ? ` @ L${node.loc.start.line}-${node.loc.end.line}`
+    ? ` @ L${node.loc!.start.line}-${node.loc!.end.line}`
     : "";
   switch (node.type) {
     case "Identifier":
@@ -49,13 +46,78 @@ function nodeToString(
   }
 }
 
+type CodePathSegmentInfo = {
+  segment: Rule.CodePathSegment;
+  nodes: string[];
+};
+class CodePathStack {
+  public readonly codePath: Rule.CodePath;
+
+  private readonly currentSegments = new Map<
+    Rule.CodePathSegment,
+    CodePathSegmentInfo
+  >();
+
+  private readonly allSegments = new Map<
+    Rule.CodePathSegment,
+    CodePathSegmentInfo
+  >();
+
+  public readonly upper: CodePathStack | null;
+
+  public constructor(codePath: Rule.CodePath, upper: CodePathStack | null) {
+    this.codePath = codePath;
+    this.upper = upper;
+  }
+
+  public getSegment(segment: Rule.CodePathSegment) {
+    return this.allSegments.get(segment);
+  }
+
+  public getAllSegments() {
+    return this.allSegments.values();
+  }
+
+  public enterSegment(segment: Rule.CodePathSegment) {
+    const info: CodePathSegmentInfo = {
+      segment,
+      nodes: [],
+    };
+    this.currentSegments.set(segment, info);
+    this.allSegments.set(segment, info);
+  }
+
+  public exitSegment(segment: Rule.CodePathSegment) {
+    this.currentSegments.delete(segment);
+  }
+
+  public enterNode(node: ESTree.Node) {
+    for (const codePathSegment of this.currentSegments.values()) {
+      codePathSegment.nodes.push(nodeToString(node, "enter"));
+    }
+  }
+
+  public exitNode(node: ESTree.Node) {
+    for (const codePathSegment of this.currentSegments.values()) {
+      const last = codePathSegment.nodes.length - 1;
+
+      if (
+        last >= 0 &&
+        codePathSegment.nodes[last] === nodeToString(node, "enter")
+      ) {
+        codePathSegment.nodes[last] = nodeToString(node, undefined);
+      } else {
+        codePathSegment.nodes.push(nodeToString(node, "exit"));
+      }
+    }
+  }
+}
+
 function renderGraphviz(code: string) {
   const linter = new Linter({ configType: "flat" });
 
-  let codePath: Rule.CodePath | undefined;
-  const codePaths: Rule.CodePath[] = [];
-  const codePathSegments: Rule.CodePathSegment[] = [];
-  const nodesMap = new Map<Rule.CodePathSegment, string[]>();
+  let stack: CodePathStack | null = null;
+  const allCodePaths: CodePathStack[] = [];
   linter.verify(
     code,
     {
@@ -67,53 +129,36 @@ function renderGraphviz(code: string) {
             "extract-code-path": {
               create() {
                 return {
-                  onCodePathStart(cp: Rule.CodePath) {
-                    if (!codePath) {
-                      codePath = cp;
-                    }
-                    codePaths.push(cp);
+                  onCodePathStart(codePath: Rule.CodePath) {
+                    stack = new CodePathStack(codePath, stack);
+                    allCodePaths.push(stack);
                   },
-                  onCodePathEnd(cp: Rule.CodePath) {
-                    codePaths.splice(codePaths.indexOf(cp), 1);
+                  onCodePathEnd(_codePath: Rule.CodePath) {
+                    stack = stack?.upper || null;
                   },
-                  onCodePathSegmentStart(seg: Rule.CodePathSegment) {
-                    codePathSegments.push(seg);
-                    nodesMap.set(seg, []);
+                  onCodePathSegmentStart(segment: Rule.CodePathSegment) {
+                    stack!.enterSegment(segment);
                   },
-                  onUnreachableCodePathSegmentStart(seg: Rule.CodePathSegment) {
-                    codePathSegments.push(seg);
-                    nodesMap.set(seg, []);
+                  onUnreachableCodePathSegmentStart(
+                    segment: Rule.CodePathSegment,
+                  ) {
+                    stack!.enterSegment(segment);
                   },
-                  onCodePathSegmentEnd(seg: Rule.CodePathSegment) {
-                    codePathSegments.splice(codePathSegments.indexOf(seg), 1);
+                  onCodePathSegmentEnd(segment: Rule.CodePathSegment) {
+                    stack!.exitSegment(segment);
                   },
-                  onUnreachableCodePathSegmentEnd(seg: Rule.CodePathSegment) {
-                    codePathSegments.splice(codePathSegments.indexOf(seg), 1);
+                  onUnreachableCodePathSegmentEnd(
+                    segment: Rule.CodePathSegment,
+                  ) {
+                    stack!.exitSegment(segment);
                   },
-                  "*"(node: any) {
-                    if (codePaths.length > 1) return;
-                    for (const codePathSegment of codePathSegments) {
-                      nodesMap
-                        .get(codePathSegment)
-                        ?.push(nodeToString(node, "enter"));
-                    }
+                  "*"(node: ESTree.Node) {
+                    if (!stack) return;
+                    stack.enterNode(node);
                   },
-                  "*:exit"(node: any) {
-                    if (codePaths.length > 1) return;
-                    for (const codePathSegment of codePathSegments) {
-                      const nodes = nodesMap.get(codePathSegment);
-                      if (!nodes) continue;
-                      const last = nodes.length - 1;
-
-                      if (
-                        last >= 0 &&
-                        nodes[last] === nodeToString(node, "enter")
-                      ) {
-                        nodes[last] = nodeToString(node, undefined);
-                      } else {
-                        nodes.push(nodeToString(node, "exit"));
-                      }
-                    }
+                  "*:exit"(node: ESTree.Node) {
+                    if (!stack) return;
+                    stack.exitNode(node);
                   },
                 };
               },
@@ -132,9 +177,12 @@ function renderGraphviz(code: string) {
     "a.js",
   );
 
-  if (!codePath) {
+  if (allCodePaths.length === 0) {
     return "";
   }
+
+  const target = allCodePaths[0];
+  const { codePath } = target;
 
   let text =
     `\n` +
@@ -150,13 +198,10 @@ function renderGraphviz(code: string) {
       'thrown[label="✘",shape=circle,width=0.3,height=0.3,fixedsize=true];\n';
   }
 
-  const traceMap: Record<string, Rule.CodePathSegment> = Object.create(null);
-  const arrows = makeDotArrows(codePath, traceMap);
+  const arrows = makeDotArrows(codePath);
 
-  for (const id in traceMap) {
-    const segment = traceMap[id];
-
-    text += `${id}[`;
+  for (const { segment, nodes } of target.getAllSegments()) {
+    text += `${segment.id}[`;
 
     if (segment.reachable) {
       text += 'label="';
@@ -165,7 +210,6 @@ function renderGraphviz(code: string) {
         'style="rounded,dashed,filled",fillcolor="#FF9800",label="<<unreachable>>\\n';
     }
 
-    const nodes = nodesMap.get(segment);
     if (nodes && nodes.length > 0) {
       text += nodes.join("\\n");
     } else {
@@ -184,24 +228,18 @@ function renderGraphviz(code: string) {
  * Makes a DOT code of a given code path.
  * The DOT code can be visualized with Graphvis.
  * @param {CodePath} codePath A code path to make DOT.
- * @param {Object} traceMap Optional. A map to check whether or not segments had been done.
  * @returns {string} A DOT code of the code path.
  */
-function makeDotArrows(
-  codePath: Rule.CodePath,
-  traceMap: Record<string, Rule.CodePathSegment>,
-) {
-  const stack: [Rule.CodePathSegment, number][] = [
-    [codePath.initialSegment, 0],
+function makeDotArrows(codePath: Rule.CodePath) {
+  const stack: { segment: Rule.CodePathSegment; index: number }[] = [
+    { segment: codePath.initialSegment, index: 0 },
   ];
-  const done = traceMap;
+  const done: Record<string, Rule.CodePathSegment> = Object.create(null);
   let lastId: string | null = codePath.initialSegment.id;
   let text = `initial->${codePath.initialSegment.id}`;
 
   while (stack.length > 0) {
-    const item = stack.pop()!;
-    const segment = item[0];
-    const index = item[1];
+    const { segment, index } = stack.pop()!;
 
     if (done[segment.id] && index === 0) {
       continue;
@@ -221,8 +259,8 @@ function makeDotArrows(
     }
     lastId = nextSegment.id;
 
-    stack.unshift([segment, 1 + index]);
-    stack.push([nextSegment, 0]);
+    stack.unshift({ segment, index: 1 + index });
+    stack.push({ segment: nextSegment, index: 0 });
   }
 
   codePath.returnedSegments.forEach((finalSegment) => {

@@ -116,6 +116,7 @@ class CodePathStack {
 function renderGraphviz(code: string) {
   const linter = new Linter({ configType: "flat" });
 
+  let ast: ESTree.Program | undefined;
   let stack: CodePathStack | null = null;
   const allCodePaths: CodePathStack[] = [];
   linter.verify(
@@ -127,7 +128,8 @@ function renderGraphviz(code: string) {
         "code-path": {
           rules: {
             "extract-code-path": {
-              create() {
+              create(context: Rule.RuleContext) {
+                ast = context.sourceCode.ast;
                 return {
                   onCodePathStart(codePath: Rule.CodePath) {
                     stack = new CodePathStack(codePath, stack);
@@ -171,7 +173,7 @@ function renderGraphviz(code: string) {
       },
       languageOptions: {
         ecmaVersion: "latest",
-        sourceType: "commonjs",
+        sourceType: "module",
         parserOptions: {
           ecmaFeatures: {
             globalReturn: true,
@@ -182,11 +184,20 @@ function renderGraphviz(code: string) {
     "a.js",
   );
 
-  if (allCodePaths.length === 0) {
+  const target =
+    ast &&
+    ast.body.some(
+      (n) =>
+        (n.type.endsWith("Statement") && n.type !== "EmptyStatement") ||
+        n.type === "VariableDeclaration",
+    )
+      ? allCodePaths[0]
+      : // Maybe use a function
+        allCodePaths[1];
+
+  if (!target) {
     return "";
   }
-
-  const target = allCodePaths[0];
   const { codePath } = target;
 
   let text =

@@ -1,51 +1,6 @@
-<script setup lang="ts">
-import { shallowRef, onMounted, computed } from "vue";
-import CodeEditor from "./CodeEditor.vue";
-import GraphvizViewer from "./GraphvizViewer.vue";
-import type { Monaco } from "../monaco-editor";
-import { loadMonaco } from "../monaco-editor";
+<script lang="ts">
 import type { Rule } from "eslint";
-import { Linter } from "eslint";
 import type * as ESTree from "estree";
-
-const props = defineProps<{
-  code: string;
-}>();
-const emit = defineEmits<(type: "update:code", value: string) => void>();
-const code = computed({
-  get: () => props.code,
-  set: (value) => emit("update:code", value),
-});
-
-const monacoRef = shallowRef<Monaco>();
-void loadMonaco().then((monaco) => (monacoRef.value = monaco));
-
-onMounted(() => {
-  renderGraphviz(code.value);
-});
-
-const dotCode = computed(() => renderGraphviz(code.value));
-
-function nodeToString(
-  node: ESTree.Node,
-  label: string | undefined,
-  options?: { showLoc?: boolean },
-) {
-  const event = label ? `:${label}` : "";
-
-  const suffix = options?.showLoc
-    ? ` @ L${node.loc!.start.line}-${node.loc!.end.line}`
-    : "";
-  switch (node.type) {
-    case "Identifier":
-      return `${node.type}${event} (${node.name})${suffix}`;
-    case "Literal":
-      return `${node.type}${event} (${node.value})${suffix}`;
-    default:
-      return `${(node as any).type}${event}${suffix}`;
-  }
-}
-
 type CodePathSegmentInfo = {
   segment: Rule.CodePathSegment;
   nodes: string[];
@@ -65,9 +20,16 @@ class CodePathStack {
 
   public readonly upper: CodePathStack | null;
 
-  public constructor(codePath: Rule.CodePath, upper: CodePathStack | null) {
+  public readonly startNode: ESTree.Node;
+
+  public constructor(
+    codePath: Rule.CodePath,
+    upper: CodePathStack | null,
+    node: ESTree.Node,
+  ) {
     this.codePath = codePath;
     this.upper = upper;
+    this.startNode = node;
   }
 
   public getSegment(segment: Rule.CodePathSegment) {
@@ -113,10 +75,71 @@ class CodePathStack {
   }
 }
 
+function nodeToString(
+  node: ESTree.Node,
+  label: string | undefined,
+  options?: { showLoc?: boolean },
+) {
+  const event = label ? `:${label}` : "";
+
+  const suffix = options?.showLoc
+    ? ` @ L${node.loc!.start.line}-${node.loc!.end.line}`
+    : "";
+  switch (node.type) {
+    case "Identifier":
+      return `${node.type}${event} (${node.name})${suffix}`;
+    case "Literal":
+      return `${node.type}${event} (${node.value})${suffix}`;
+    default:
+      return `${(node as any).type}${event}${suffix}`;
+  }
+}
+</script>
+
+<script setup lang="ts">
+import { shallowRef, onMounted, computed, watch } from "vue";
+import CodeEditor from "./CodeEditor.vue";
+import GraphvizViewer from "./GraphvizViewer.vue";
+import type { Monaco } from "../monaco-editor";
+import { loadMonaco } from "../monaco-editor";
+import { Linter } from "eslint";
+
+const props = defineProps<{
+  code: string;
+}>();
+const emit = defineEmits<(type: "update:code", value: string) => void>();
+const code = computed({
+  get: () => props.code,
+  set: (value) => emit("update:code", value),
+});
+
+const monacoRef = shallowRef<Monaco>();
+void loadMonaco().then((monaco) => (monacoRef.value = monaco));
+
+onMounted(() => {
+  renderGraphviz(code.value);
+});
+
+const dotCodeList = computed(() => renderGraphviz(code.value));
+const activeNode = shallowRef<ESTree.Node | null>(null);
+
+watch(
+  dotCodeList,
+  (list) => {
+    if (
+      activeNode.value != null &&
+      list.some((item) => item.node === activeNode.value)
+    ) {
+      return;
+    }
+    activeNode.value = list[0]?.node || null;
+  },
+  { immediate: true },
+);
+
 function renderGraphviz(code: string) {
   const linter = new Linter({ configType: "flat" });
 
-  let ast: ESTree.Program | undefined;
   let stack: CodePathStack | null = null;
   const allCodePaths: CodePathStack[] = [];
   linter.verify(
@@ -128,11 +151,10 @@ function renderGraphviz(code: string) {
         "code-path": {
           rules: {
             "extract-code-path": {
-              create(context: Rule.RuleContext) {
-                ast = context.sourceCode.ast;
+              create() {
                 return {
-                  onCodePathStart(codePath: Rule.CodePath) {
-                    stack = new CodePathStack(codePath, stack);
+                  onCodePathStart(codePath: Rule.CodePath, node: ESTree.Node) {
+                    stack = new CodePathStack(codePath, stack, node);
                     allCodePaths.push(stack);
                   },
                   onCodePathEnd(_codePath: Rule.CodePath) {
@@ -184,60 +206,51 @@ function renderGraphviz(code: string) {
     "a.js",
   );
 
-  const target =
-    ast &&
-    ast.body.some(
-      (n) =>
-        (n.type.endsWith("Statement") && n.type !== "EmptyStatement") ||
-        n.type === "VariableDeclaration",
-    )
-      ? allCodePaths[0]
-      : // Maybe use a function
-        allCodePaths[1];
+  return allCodePaths.map((target) => {
+    const { codePath } = target;
 
-  if (!target) {
-    return "";
-  }
-  const { codePath } = target;
+    let text =
+      `\n` +
+      `digraph {\n` +
+      `node[shape=box,style="rounded,filled",fillcolor=white];\n` +
+      `initial[label="",shape=circle,style=filled,fillcolor=black,width=0.25,height=0.25];\n`;
 
-  let text =
-    `\n` +
-    `digraph {\n` +
-    `node[shape=box,style="rounded,filled",fillcolor=white];\n` +
-    `initial[label="",shape=circle,style=filled,fillcolor=black,width=0.25,height=0.25];\n`;
-
-  if (codePath.returnedSegments.length > 0) {
-    text += `final[label="",shape=doublecircle,style=filled,fillcolor=black,width=0.25,height=0.25];\n`;
-  }
-  if (codePath.thrownSegments.length > 0) {
-    text +=
-      'thrown[label="✘",shape=circle,width=0.3,height=0.3,fixedsize=true];\n';
-  }
-
-  const arrows = makeDotArrows(codePath);
-
-  for (const { segment, nodes } of target.getAllSegments()) {
-    text += `${segment.id}[`;
-
-    if (segment.reachable) {
-      text += 'label="';
-    } else {
+    if (codePath.returnedSegments.length > 0) {
+      text += `final[label="",shape=doublecircle,style=filled,fillcolor=black,width=0.25,height=0.25];\n`;
+    }
+    if (codePath.thrownSegments.length > 0) {
       text +=
-        'style="rounded,dashed,filled",fillcolor="#FF9800",label="<<unreachable>>\\n';
+        'thrown[label="✘",shape=circle,width=0.3,height=0.3,fixedsize=true];\n';
     }
 
-    if (nodes && nodes.length > 0) {
-      text += nodes.join("\\n");
-    } else {
-      text += "????";
+    const arrows = makeDotArrows(codePath);
+
+    for (const { segment, nodes } of target.getAllSegments()) {
+      text += `${segment.id}[`;
+
+      if (segment.reachable) {
+        text += 'label="';
+      } else {
+        text +=
+          'style="rounded,dashed,filled",fillcolor="#FF9800",label="<<unreachable>>\\n';
+      }
+
+      if (nodes && nodes.length > 0) {
+        text += nodes.join("\\n");
+      } else {
+        text += "????";
+      }
+
+      text += '"];\n';
     }
 
-    text += '"];\n';
-  }
-
-  text += `${arrows}\n`;
-  text += "}";
-  return text;
+    text += `${arrows}\n`;
+    text += "}";
+    return {
+      dot: text,
+      node: target.startNode,
+    };
+  });
 }
 
 /**
@@ -304,7 +317,25 @@ function makeDotArrows(codePath: Rule.CodePath) {
 <template>
   <div class="eslint-cpa">
     <CodeEditor v-model:code="code" class="eslint-cpa__code" />
-    <GraphvizViewer :dot="dotCode" class="eslint-cpa__dot" />
+    <div class="eslint-cpa__dot-wrapper">
+      <div class="eslint-cpa__dot-tab">
+        <template v-for="dotCode in dotCodeList">
+          <label>
+            <input
+              type="radio"
+              :value="dotCode.node"
+              v-model="activeNode"
+              name="active"
+            />
+            {{ dotCode.node.type }}@L{{ dotCode.node.loc!.start.line }}
+          </label>
+        </template>
+      </div>
+      <GraphvizViewer
+        :dot="dotCodeList.find((item) => item.node === activeNode)?.dot || ''"
+        class="eslint-cpa__dot"
+      />
+    </div>
   </div>
 </template>
 
@@ -322,10 +353,19 @@ function makeDotArrows(codePath: Rule.CodePath) {
 }
 
 .eslint-cpa__code,
-.eslint-cpa__dot {
+.eslint-cpa__dot-wrapper {
   width: 50%;
   min-height: 0;
   height: 100%;
+}
+
+.eslint-cpa__dot-wrapper {
+  display: flex;
+  flex-direction: column;
+}
+
+.eslint-cpa__dot {
+  flex-grow: 1;
 }
 
 .eslint-cpa :deep(a) {

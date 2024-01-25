@@ -171,7 +171,12 @@ function renderGraphviz(code: string) {
       },
       languageOptions: {
         ecmaVersion: "latest",
-        sourceType: "module",
+        sourceType: "commonjs",
+        parserOptions: {
+          ecmaFeatures: {
+            globalReturn: true,
+          },
+        },
       },
     },
     "a.js",

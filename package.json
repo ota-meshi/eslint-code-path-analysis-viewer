@@ -53,6 +53,6 @@
     "@hpcc-js/wasm": "^2.15.3",
     "fflate": "^0.8.1",
     "monaco-editor": "^0.50.0",
-    "shine-and-bright": "^0.2.0"
+    "shine-and-bright": "^0.3.0"
   }
 }

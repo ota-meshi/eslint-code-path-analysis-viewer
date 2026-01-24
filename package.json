@@ -27,7 +27,7 @@
   },
   "homepage": "https://ota-meshi.github.io/eslint-code-path-analysis-viewer/",
   "devDependencies": {
-    "@ota-meshi/eslint-plugin": "^0.15.2",
+    "@ota-meshi/eslint-plugin": "^0.20.0",
     "@types/eslint": "^8.56.2",
     "@types/estree": "^1.0.5",
     "@types/node": "^24.0.0",
